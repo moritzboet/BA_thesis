@@ -2,5 +2,4 @@ data/
 __pycache__/
 .ipynb_checkpoints/
 thesis_env/
-temp.md
-temp2.txt
+temp/
