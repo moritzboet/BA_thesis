@@ -4,45 +4,60 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 
 def load_and_clean_dataset(file_path):
-    """
-    Loads a CICIDS-2017 CSV file, cleans column spaces, strips out non-numeric
-    metadata identifiers, purges text-based infinity fields, and drops invalid rows.
+    """Loads a CICIDS-2017 CSV file, cleans column spaces, strips out non-numeric
+
+    metadata identifiers, removes empty CSV padding rows, handles infinite flow
+    rates, and logs exact dropped row counts.
     """
     print(f"[*] Loading raw dataset from: {file_path}")
-    df = pd.read_csv(file_path, encoding='latin-1')
-    
-    # 1. Clean header names by stripping out hidden spaces
+    df = pd.read_csv(file_path, encoding="latin-1", low_memory=False)
+
     df.columns = df.columns.str.strip()
-    
-    if 'Label' not in df.columns:
-        raise ValueError("Critical Error: 'Label' column not found in the dataset.")
-        
-    # 2. Exclude network metadata identifiers to prevent data leakage (cheating)
-    metadata_cols = ['Flow ID', 'Source IP', 'Source Port', 'Destination IP', 'Destination Port', 'Timestamp']
+
+    if "Label" not in df.columns:
+        raise ValueError(
+            "Critical Error: 'Label' column not found in the dataset."
+        )
+
+    # 1. Purge completely empty padding lines (trailing CSV artifacts)
+    initial_raw_rows = len(df)
+    empty_rows_mask = df.isna().all(axis=1)
+    df = df[~empty_rows_mask].copy()
+    purged_empty_rows = initial_raw_rows - len(df)
+
+    # 2. Exclude network metadata identifiers
+    metadata_cols = [
+        "Flow ID",
+        "Source IP",
+        "Source Port",
+        "Destination IP",
+        "Destination Port",
+        "Timestamp",
+    ]
     columns_to_drop = [col for col in metadata_cols if col in df.columns]
     df.drop(columns=columns_to_drop, inplace=True)
-    print(f"[-] Dropped identifier columns: {columns_to_drop}")
-    
-    # 3. Intercept literal text strings of "Infinity" before casting types
-    # This prevents pandas from forcing numeric columns into object types
-    df.replace(["Infinity", "infinity", "Inf", "-Infinity", "-infinity"], np.nan, inplace=True)
-    
-    # 4. Force convert all features (except the target Label) into numerical floats
+
+    # 3. Numeric conversion & Infinity handling
     for col in df.columns:
-        if col != 'Label':
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-    # Catch any remaining mathematical inf entries just in case
+        if col != "Label":
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    
-    # 5. Purge rows containing invalid cells (NaN / Inf)
-    initial_rows = df.shape[0]
+
+    # 4. Remove invalid rows
+    valid_rows_before = len(df)
     df.dropna(inplace=True)
-    final_rows = df.shape[0]
-    
-    if initial_rows != final_rows:
-        print(f"[!] Purged {initial_rows - final_rows} malformed rows containing Infinity or empty cells.")
-        
+    purged_invalid_rows = valid_rows_before - len(df)
+
+    print(
+        f"[*] Dataset Ingestion & Cleaning Audit:\n"
+        f"    -> Raw Rows Ingested:          {initial_raw_rows:,}\n"
+        f"    -> Empty CSV Padding Purged:   {purged_empty_rows:,}\n"
+        f"    -> Valid Network Flows:        {valid_rows_before:,}\n"
+        f"    -> Invalid Flows Dropped (Inf/NaN): {purged_invalid_rows:,}\n"
+        f"    -> Final Usable Flows:         {len(df):,}"
+    )
+
     return df
 
 def prepare_splits(df, sample_size=None, random_state=42):
