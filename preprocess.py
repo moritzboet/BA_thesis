@@ -60,54 +60,57 @@ def load_and_clean_dataset(file_path):
 
     return df
 
-def prepare_splits(df, sample_size=None, random_state=42):
+def prepare_splits(df, random_state=42):
     """
-    Applies the binary label shortcut, separates features from targets,
-    optionally applies stratified sampling, executes an 80/20 split, 
-    and handles data-leakage safe scaling.
+    Standardized 70/15/15 Train/Validation/Test split protocol matching
+    all experimental notebooks.
+    
+    1. Maps binary labels (0 = BENIGN, 1 = Attack).
+    2. Performs stratified two-stage split:
+       - 70% Train, 30% Temp
+       - 15% Validation, 15% Test (from Temp)
+    3. Fits MinMaxScaler strictly on the Training split to prevent leakage.
     """
     df_processed = df.copy()
     
-    # 1. Binary Label Shortcut: If it's BENIGN, map to 0. Everything else is an attack (1).
+    # 1. Binary Label Standardisation
     df_processed['Label'] = df_processed['Label'].astype(str).str.strip().str.upper()
     df_processed['Label'] = df_processed['Label'].apply(lambda x: 0 if x == 'BENIGN' else 1)
     
-    # Separate features (X) from target ground truth (y)
     X = df_processed.drop(columns=['Label'])
-    y = df_processed['Label']
+    y = df_processed['Label'].values
     
-    # 2. Strategic Sampling: Keep class ratios identical but shrink total rows 
-    # to protect against post-hoc explainers slowing down your computer later.
-    if sample_size and sample_size < len(df_processed):
-        print(f"[*] Applying strategic downsampling to a subset of {sample_size} rows...")
-        X, _, y, _ = train_test_split(
-            X, y,
-            train_size=sample_size,
-            stratify=y,
-            random_state=random_state
-        )
-        
-    # 3. Isolated Train/Test Split (80% Train, 20% Evaluation Test)
-    X_train, X_test, y_train, y_test = train_test_split(
+    # 2. Stage A: 70% Train, 30% Temp (Stratified)
+    X_train, X_temp, y_train, y_temp = train_test_split(
         X, y,
-        test_size=0.2,
+        test_size=0.30,
         stratify=y,
         random_state=random_state
     )
     
-    print(f"[*] Preprocessing complete. Pipeline breakdown:")
-    print(f"    -> Training set size: {X_train.shape[0]} rows")
-    print(f"    -> Evaluation test set size: {X_test.shape[0]} rows")
-    print(f"    -> Feature metrics tracking: {X_train.shape[1]} individual features")
+    # 2. Stage B: 15% Validation, 15% Test (Stratified)
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_temp, y_temp,
+        test_size=0.50,
+        stratify=y_temp,
+        random_state=random_state
+    )
     
-    # 4. Bounded Min-Max Scaling [0, 1] — Completely isolated to training split data
+    # 3. Leakage-Free Feature Scaling: Fit strictly on X_train only
     scaler = MinMaxScaler()
+    scaler.fit(X_train)
     
-    # Fit the mathematics ONLY on training data, then transform both splits
-    X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns)
-    X_test_scaled = pd.DataFrame(scaler.transform(X_test), columns=X_test.columns)
+    feature_names = X_train.columns.tolist()
+    X_train_scaled = pd.DataFrame(scaler.transform(X_train), columns=feature_names)
+    X_val_scaled = pd.DataFrame(scaler.transform(X_val), columns=feature_names)
+    X_test_scaled = pd.DataFrame(scaler.transform(X_test), columns=feature_names)
     
-    return X_train_scaled, X_test_scaled, y_train.values, y_test.values, X_train.columns.tolist()
+    print(f"[*] Preprocessing complete. Synchronized 70/15/15 pipeline breakdown:")
+    print(f"    -> Training set size:   {X_train_scaled.shape[0]} rows ({X_train_scaled.shape[1]} features)")
+    print(f"    -> Validation set size: {X_val_scaled.shape[0]} rows")
+    print(f"    -> Test set size:       {X_test_scaled.shape[0]} rows")
+    
+    return X_train_scaled, X_val_scaled, X_test_scaled, y_train, y_val, y_test, feature_names
 
 if __name__ == "__main__":
     print("[+] Preprocessing module compiled successfully.")
